@@ -11,6 +11,7 @@ func TestSweref99_ToWGS84(t *testing.T) {
 	tests := map[Point]GeodesicCoordinate{
 		Point{6539980.38, 689323.231}: {58.957488, 18.292103},
 		Point{6580479.43, 674768.606}: {59.326855, 18.071839},
+		Point{6529507.61, 666048.223}: {58.873208, 17.880177},
 	}
 
 	for origin, expected := range tests {

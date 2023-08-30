@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cassini/geomath"
 	"fmt"
 	shapefile "github.com/jonas-p/go-shp"
 	"image"
 	"image/color"
 	"image/png"
-	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -40,61 +41,40 @@ func fromLatin1(input string) (string, error) {
 	return output.String(), nil
 }
 
-type point struct {
-	X float64
-	Y float64
-}
-
-func (p point) ImageCoords(origin point, scale point) image.Point {
-	return image.Point{
-		X: int((p.X - origin.X) / scale.X),
-		Y: int((p.Y - origin.Y) / scale.Y),
-	}
-}
-
 type PointFeature struct {
-	Position   point
+	Position   geomath.GeodesicCoordinate
 	Color      color.Color
 	Attributes map[string]string
 }
 
 type Image struct {
-	Min   point
-	Max   point
-	Steps point
-
+	Tile  geomath.Tile
 	Image *image.RGBA
 }
 
-func NewImage(min point, max point, w, h int) *Image {
-	dX := math.Abs(max.X - min.X)
-	dY := math.Abs(max.Y - min.Y)
-
+func NewImage(t geomath.Tile) *Image {
 	return &Image{
-		Min: min,
-		Max: max,
-		Steps: point{
-			X: dX / float64(w),
-			Y: dY / float64(h),
-		},
-		Image: image.NewRGBA(image.Rect(0, 0, w, h)),
+		Tile:  t,
+		Image: image.NewRGBA(image.Rect(0, 0, int(t.Map.Size), int(t.Map.Size))),
 	}
 }
 
-func (i *Image) DrawPoint(p point, col color.Color) {
-	c := p.ImageCoords(i.Min, i.Steps)
-	i.Image.Set(c.X, c.Y, col)
+func (i *Image) DrawPoint(coord geomath.GeodesicCoordinate, col color.Color) {
+	p, ok := i.Tile.Position(coord)
+	if !ok {
+		return
+	}
+
+	i.Image.Set(int(p.Longitude), int(p.Latitude), col)
 }
 
 type grid struct {
-	Min point
-	Max point
-
+	Point    geomath.Point
 	Features []PointFeature
 }
 
 func main() {
-	shape, err := shapefile.Open("terrang/01/js_01.shp")
+	shape, err := shapefile.Open("/Users/emiltullstedt/Stockholm/Sweref_99_TM/shape/tk_01_Sweref_99_TM_shape/terrang/01/bs_01.shp")
 	if err != nil {
 		panic(err)
 	}
@@ -102,23 +82,40 @@ func main() {
 	fields := shape.Fields()
 	boundaries := shape.BBox()
 
-	g := grid{
-		Min: point{
-			X: boundaries.MinX,
-			Y: boundaries.MinY,
-		},
-		Max: point{
-			X: boundaries.MaxX,
-			Y: boundaries.MaxY,
-		},
+	tiles := []geomath.Tile{}
+	zoomLevels := []uint8{8, 9, 10, 11}
+
+	for _, zoom := range zoomLevels {
+		m := &geomath.TileMap{Size: 256}
+
+		nw := m.TileCoordinate(geomath.Sweref99TM.ToCoordinate(geomath.Point{
+			Latitude:  boundaries.MaxY,
+			Longitude: boundaries.MinX,
+		}), zoom)
+		se := m.TileCoordinate(geomath.Sweref99TM.ToCoordinate(geomath.Point{
+			Latitude:  boundaries.MinY,
+			Longitude: boundaries.MaxX,
+		}), zoom)
+
+		for lat := nw.Latitude; lat <= se.Latitude; lat++ {
+			for lon := nw.Longitude; lon <= se.Longitude; lon++ {
+				tiles = append(tiles, m.Tile(geomath.Point{
+					Latitude:  lat,
+					Longitude: lon,
+				}, zoom))
+			}
+		}
 	}
 
+	feats := make([]PointFeature, 0)
 	for shape.Next() {
 		n, p := shape.Shape()
 		box := p.BBox()
 
+		coord := geomath.Sweref99TM.ToCoordinate(geomath.Point{box.MinY, box.MinX})
+
 		feat := PointFeature{
-			Position:   point{X: box.MinX, Y: box.MinY},
+			Position:   coord,
 			Color:      nil,
 			Attributes: map[string]string{},
 		}
@@ -141,16 +138,20 @@ func main() {
 			feat.Color = color.RGBA{B: 0xFF, A: 0xFF}
 		}
 
-		g.Features = append(g.Features, feat)
+		feats = append(feats, feat)
 	}
 
-	img := NewImage(g.Min, g.Max, 256, 256)
+	os.Mkdir("out", 0o750)
+	for _, t := range tiles {
+		img := NewImage(t)
+		for _, feat := range feats {
+			img.DrawPoint(feat.Position, feat.Color)
+		}
 
-	for _, feat := range g.Features {
-		img.DrawPoint(feat.Position, feat.Color)
+		pos := t.TilePosition()
+		os.Mkdir(filepath.Join("out", fmt.Sprintf("%d", t.Zoom)), 0o750)
+		os.Mkdir(filepath.Join("out", fmt.Sprintf("%d/%d", t.Zoom, int(pos.Longitude))), 0o750)
+		f, _ := os.Create(fmt.Sprintf("out/%d/%d/%d.png", t.Zoom, int(pos.Longitude), int(pos.Latitude)))
+		png.Encode(f, img.Image)
 	}
-
-	f, _ := os.Create("image.png")
-	png.Encode(f, img.Image)
-	fmt.Printf("%#v", g)
 }

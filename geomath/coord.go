@@ -58,6 +58,10 @@ func (b GeodesicBox) String() string {
 	return fmt.Sprintf("%.6fN(max) %.6fE(max) %.6fN(min) %.6fE(min)", b.North, b.East, b.South, b.West)
 }
 
+func (b GeodesicBox) Inside(c GeodesicCoordinate) bool {
+	return b.North >= c.Latitude && b.South <= c.Latitude && b.East >= c.Longitude && b.West <= c.Longitude
+}
+
 var (
 	Sweref99TM = GaussKreger{
 		axis:            6_378_137,

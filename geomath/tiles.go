@@ -1,6 +1,8 @@
 package geomath
 
-import "math"
+import (
+	"math"
+)
 
 const EarthCircumference = 40_075_016.686 // meters at equator
 
@@ -8,10 +10,10 @@ type TileMap struct {
 	Size uint16
 }
 
-func (t TileMap) TileCoordinate(coord GeodesicCoordinate, zoom uint8) Point {
+func (t *TileMap) TileCoordinate(coord GeodesicCoordinate, zoom uint8) Point {
 	n := float64(int(1) << zoom)
 	latRad := coord.Latitude.Radian()
-	lat := n / 2 * (1 - (math.Asinh(math.Tan(latRad)))/math.Pi)
+	lat := (1.0 - math.Asinh(math.Tan(latRad))/math.Pi) / 2.0 * n
 	lon := n / 360 * float64(coord.Longitude+180)
 	return Point{
 		Latitude:  math.Floor(lat),
@@ -19,7 +21,22 @@ func (t TileMap) TileCoordinate(coord GeodesicCoordinate, zoom uint8) Point {
 	}
 }
 
-func (t TileMap) TileNW(p Point, zoom uint8) GeodesicCoordinate {
+func (t *TileMap) Tile(p Point, zoom uint8) Tile {
+	return Tile{
+		Center: t.tileCenter(p, zoom),
+		Zoom:   zoom,
+		Map:    t,
+	}
+}
+
+func (t *TileMap) tileCenter(p Point, zoom uint8) GeodesicCoordinate {
+	return t.tileNW(Point{
+		Latitude:  p.Latitude + 0.5,
+		Longitude: p.Longitude + 0.5,
+	}, zoom)
+}
+
+func (t *TileMap) tileNW(p Point, zoom uint8) GeodesicCoordinate {
 	n := float64(int(1) << zoom)
 
 	latRad := math.Atan(math.Sinh(math.Pi * (1 - 2*p.Latitude/n)))
@@ -27,23 +44,6 @@ func (t TileMap) TileNW(p Point, zoom uint8) GeodesicCoordinate {
 		Latitude:  RadianToDegree(latRad),
 		Longitude: Degree(p.Longitude/n*360 - 180),
 	}
-}
-
-func (t TileMap) TileBox(p Point, zoom uint8) GeodesicBox {
-	nw := t.TileNW(p, zoom)
-	se := t.TileNW(Point{
-		Latitude:  p.Latitude + 1,
-		Longitude: p.Longitude + 1,
-	}, zoom)
-
-	return NewBox(nw, se)
-}
-
-func (t TileMap) TileCenter(p Point, zoom uint8) GeodesicCoordinate {
-	return t.TileNW(Point{
-		Latitude:  p.Latitude + 0.5,
-		Longitude: p.Longitude + 0.5,
-	}, zoom)
 }
 
 type Tile struct {
@@ -61,6 +61,37 @@ func (t Tile) MetersPerPixel() float64 {
 	return t.MetersPerTile() / float64(t.Map.Size)
 }
 
-func sec(n float64) float64 {
-	return 1 / math.Cos(n)
+func (t Tile) Position(coord GeodesicCoordinate) (Point, bool) {
+	box := t.Boundaries()
+	if !box.Inside(coord) {
+		return Point{}, false
+	}
+
+	mapSize := float64(t.Map.Size)
+	stepLat := mapSize / float64(box.North-box.South)
+	stepLon := mapSize / float64(box.East-box.West)
+
+	relLat := float64(coord.Latitude - box.South)
+	relLon := float64(coord.Longitude - box.West)
+
+	return Point{
+		Latitude:  math.Round(mapSize - stepLat*relLat),
+		Longitude: math.Round(stepLon * relLon),
+	}, true
+}
+
+func (t Tile) Boundaries() GeodesicBox {
+	p := t.Map.TileCoordinate(t.Center, t.Zoom)
+
+	nw := t.Map.tileNW(p, t.Zoom)
+	se := t.Map.tileNW(Point{
+		Latitude:  p.Latitude + 1,
+		Longitude: p.Longitude + 1,
+	}, t.Zoom)
+
+	return NewBox(nw, se)
+}
+
+func (t Tile) TilePosition() Point {
+	return t.Map.TileCoordinate(t.Center, t.Zoom)
 }

@@ -82,5 +82,13 @@ func TestTileCoordinate(t *testing.T) {
 }
 
 func TestTileMap_TileCenter(t *testing.T) {
-	t.Log(Map.TileBox(Point{75, 141}, 8))
+	tiles := []Tile{
+		Map.Tile(Point{75, 140}, 8),
+		Map.Tile(Point{76, 140}, 8),
+	}
+
+	for _, tile := range tiles {
+		t.Log(tile.Boundaries())
+		t.Log(tile.Position(GeodesicCoordinate{59.534318, 18.187500}))
+	}
 }
